@@ -115,7 +115,8 @@ export default function App() {
     nextTrack,
     prevTrack,
     toggleRepeat,
-  } = useAudioPlayer();
+    stopTrack,
+  } = useAudioPlayer() as ReturnType<typeof useAudioPlayer> & { stopTrack?: () => void };
 
   // Load storage data and user configuration on boot
   useEffect(() => {
@@ -138,7 +139,7 @@ export default function App() {
       if (savedFavs) {
         try {
           setFavoriteIds(JSON.parse(savedFavs));
-        } catch {}
+        } catch { }
       }
 
       // 4. Custom splash config
@@ -146,7 +147,7 @@ export default function App() {
       if (savedSplash) {
         try {
           setSplashConfig(JSON.parse(savedSplash));
-        } catch {}
+        } catch { }
       }
 
       // 5. Track library
@@ -260,6 +261,16 @@ export default function App() {
   };
 
   const handleDeleteTrack = async (id: string) => {
+    // If deleted track is currently playing or loaded in player, tear down playback
+    if (currentTrack?.id === id) {
+      if (typeof stopTrack === 'function') {
+        stopTrack();
+      } else {
+        if (isPlaying) {
+          togglePlay();
+        }
+      }
+    }
     await deleteTrack(id);
     await refreshLibrary();
   };
@@ -447,8 +458,8 @@ export default function App() {
             statusNotice.type === 'success'
               ? styles.toastSuccess
               : statusNotice.type === 'info'
-              ? styles.toastInfo
-              : styles.toastWarning,
+                ? styles.toastInfo
+                : styles.toastWarning,
           ]}
         >
           <Text style={styles.toastText}>{statusNotice.message}</Text>
@@ -633,17 +644,23 @@ export default function App() {
                     const isCurrent = currentTrack?.id === track.id;
                     const isFavorite = favoriteIds.includes(track.id);
 
+                    const handleRowClick = () => {
+                      if (isCurrent) {
+                        togglePlay();
+                      } else {
+                        playTrack(
+                          track,
+                          activeTab === 'favorite' ? 'Favorite' : 'All',
+                          displayedTracks
+                        );
+                      }
+                    };
+
                     return (
                       <TouchableOpacity
                         key={track.id}
                         activeOpacity={0.8}
-                        onPress={() =>
-                          playTrack(
-                            track,
-                            activeTab === 'favorite' ? 'Favorite' : 'All',
-                            displayedTracks
-                          )
-                        }
+                        onPress={handleRowClick}
                         style={[
                           styles.trackRowCard,
                           isCurrent && styles.trackRowCardActive,
@@ -702,12 +719,14 @@ export default function App() {
                           >
                             <Trash2 size={16} color="#8F8A9F" />
                           </TouchableOpacity>
-                          <View
+                          <TouchableOpacity
+                            activeOpacity={0.8}
+                            onPress={handleRowClick}
                             style={[
                               styles.trackPlayIndicator,
                               isCurrent &&
-                                isPlaying &&
-                                styles.trackPlayIndicatorActive,
+                              isPlaying &&
+                              styles.trackPlayIndicatorActive,
                             ]}
                           >
                             {isCurrent && isPlaying ? (
@@ -720,7 +739,7 @@ export default function App() {
                                 style={{ marginLeft: 2 }}
                               />
                             )}
-                          </View>
+                          </TouchableOpacity>
                         </View>
                       </TouchableOpacity>
                     );

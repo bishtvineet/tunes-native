@@ -177,6 +177,24 @@ export const useAudioPlayer = () => {
     });
   }, []);
 
+  const stopTrack = useCallback(() => {
+  if (playerRef.current) {
+    try {
+      if (typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
+        (playerRef.current as any).setActiveForLockScreen(false);
+      }
+      playerRef.current.pause();
+      playerRef.current.release();
+    } catch {}
+    playerRef.current = null;
+  }
+  setCurrentTrack(null);
+  currentTrackRef.current = null;
+  setIsPlaying(false);
+  setCurrentTime(0);
+  setDuration(0);
+}, []);
+
   return {
     currentTrack,
     isPlaying,
@@ -190,5 +208,8 @@ export const useAudioPlayer = () => {
     nextTrack,
     prevTrack,
     toggleRepeat,
+    stopTrack
   };
+
 };
+

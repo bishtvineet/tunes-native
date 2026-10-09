@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import type { VideoInfo, Track } from '../types';
 import { getApiConfig, getRenderUrl } from './network';
 import { getTrackFilePath } from './storage';
+import { createAudioPlayer } from 'expo-audio';
 
 export interface ProgressCallbackData {
   percent: number; // 0 to 100, or -1 when indeterminate
@@ -137,7 +138,7 @@ export const downloadAudioStream = async (
       const title = previewFallback?.title || safeDecode(rawTitle) || 'Unknown Title';
       const artist = previewFallback?.channel || safeDecode(rawArtist) || 'Unknown Artist';
       const thumbnailUrl = previewFallback?.thumbnail || rawThumb || '';
-      const duration = previewFallback?.duration || Number(res.headers.get('X-Audio-Duration')) || 0;
+      let duration = previewFallback?.duration || Number(res.headers.get('X-Audio-Duration')) || 0;
       const id = previewFallback?.id || res.headers.get('X-Audio-Id') || `track_${Date.now()}`;
 
       const targetFilePath = getTrackFilePath(id);
@@ -174,7 +175,10 @@ export const downloadAudioStream = async (
         totalBytes: uint8Array.length,
         statusText: 'Saved offline!',
       });
-
+      if (!duration || duration <= 0) {
+        duration = await getAudioDurationFromUri(targetFilePath);
+      }
+      
       return {
         id,
         title,
@@ -226,4 +230,47 @@ export const syncCookiesToBackend = async (
   }
 
   return await res.json();
+};
+/**
+ * Native duration resolver for iOS using expo-audio.
+ * Inspects the downloaded audio file directly without playing sound.
+ */
+export const getAudioDurationFromUri = (uri: string): Promise<number> => {
+  return new Promise((resolve) => {
+    try {
+      const tempPlayer = createAudioPlayer({ uri });
+      let resolved = false;
+
+      const cleanup = (durationVal: number) => {
+        if (resolved) return;
+        resolved = true;
+        try {
+          tempPlayer.release();
+        } catch {}
+        resolve(durationVal > 0 ? Math.round(durationVal) : 0);
+      };
+
+      // Timeout safety: if metadata isn't ready in 3.5s, resolve 0
+      const timer = setTimeout(() => {
+        cleanup(tempPlayer.duration || 0);
+      }, 3500);
+
+      // Check if duration is immediately available on creation
+      if (tempPlayer.duration && tempPlayer.duration > 0) {
+        clearTimeout(timer);
+        cleanup(tempPlayer.duration);
+        return;
+      }
+
+      // Listen for the first status update containing duration
+      tempPlayer.addListener('playbackStatusUpdate', (status) => {
+        if (status.duration && status.duration > 0) {
+          clearTimeout(timer);
+          cleanup(status.duration);
+        }
+      });
+    } catch {
+      resolve(0);
+    }
+  });
 };
