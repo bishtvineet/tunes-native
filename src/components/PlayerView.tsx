@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   StyleSheet,
   Dimensions,
   Platform,
+  Animated,
+  Easing,
 } from 'react-native';
 import {
   Play,
@@ -24,6 +26,7 @@ import type { RepeatMode } from '../hooks/useAudioPlayer';
 import { formatDuration } from '../utils/audio';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const SCRUBBER_BAR_WIDTH = SCREEN_WIDTH - 48;
 
 interface PlayerViewProps {
   currentTrack: Track | null;
@@ -54,6 +57,56 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // Snake Wave Animation Loop
+  const waveAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    let waveLoop: Animated.CompositeAnimation | null = null;
+    let pulseLoop: Animated.CompositeAnimation | null = null;
+
+    if (isPlaying) {
+      // Continuous ribbon crawl loop
+      waveLoop = Animated.loop(
+        Animated.timing(waveAnim, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      );
+
+      // Undulating vertical sine wave bounce for snake head & ribbon crests
+      pulseLoop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 600,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 0,
+            duration: 600,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+
+      waveLoop.start();
+      pulseLoop.start();
+    } else {
+      waveAnim.setValue(0);
+      pulseAnim.setValue(0);
+    }
+
+    return () => {
+      waveLoop?.stop();
+      pulseLoop?.stop();
+    };
+  }, [isPlaying, waveAnim, pulseAnim]);
+
   if (!currentTrack) return null;
 
   const totalDuration = duration || currentTrack.duration || 1;
@@ -64,23 +117,49 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
 
   const isRepeatActive = repeatMode !== 'off';
 
+  // Wave ripple offset (moving left-to-right along the bar)
+  const waveTranslateX = waveAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-60, 60],
+  });
+
+  // Vertical wave ripple (crawling snake height effect)
+  const snakeTranslateY = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-2.5, 2.5],
+  });
+
+  const snakeScaleY = pulseAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.4, 1],
+  });
+
   return (
     <>
-      {/* 1. Floating Mini Player Pill (Floats right above bottom tab navigation) */}
+      {/* 1. Floating Mini Player Pill */}
       <View style={styles.floatingWrapper} pointerEvents="box-none">
         <TouchableOpacity
           activeOpacity={0.92}
           onPress={() => setIsExpanded(true)}
           style={styles.floatingBar}
         >
-          {/* Subtle bottom progress border line */}
+          {/* Subtle bottom progress line with red snake lead */}
           <View style={styles.floatingProgressTrack}>
             <View
               style={[
                 styles.floatingProgressFill,
                 { width: `${progressPercent}%` },
               ]}
-            />
+            >
+              {isPlaying && (
+                <Animated.View
+                  style={[
+                    styles.miniSnakeShimmer,
+                    { transform: [{ translateX: waveTranslateX }] },
+                  ]}
+                />
+              )}
+            </View>
           </View>
 
           {/* Left Thumbnail & Info */}
@@ -137,13 +216,12 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
       <Modal
         visible={isExpanded}
         animationType="slide"
-        presentationStyle="fullScreen"
+        presentationStyle="pageSheet"
         onRequestClose={() => setIsExpanded(false)}
       >
         <View style={styles.modalContainer}>
-          {/* Top Grab Indicator & Header */}
+          {/* Top Header */}
           <View style={styles.modalHeader}>
-            <View style={styles.grabBar} />
             <View style={styles.headerRow}>
               <TouchableOpacity
                 onPress={() => setIsExpanded(false)}
@@ -206,24 +284,68 @@ export const PlayerView: React.FC<PlayerViewProps> = ({
 
           {/* Bottom Scrubber & Transport Controls */}
           <View style={styles.bottomSection}>
-            {/* Scrubber Touch Bar */}
+            {/* Scrubber Touch Bar with Animated Snake Wave */}
             <TouchableOpacity
               activeOpacity={1}
               style={styles.scrubberTouchArea}
               onPress={(e) => {
                 const { locationX } = e.nativeEvent;
-                const barWidth = SCREEN_WIDTH - 48;
-                const percent = Math.min(Math.max(0, locationX / barWidth), 1);
+                const percent = Math.min(Math.max(0, locationX / SCRUBBER_BAR_WIDTH), 1);
                 onSeek(Math.floor(percent * totalDuration));
               }}
             >
               <View style={styles.scrubberTrack}>
+                {/* Active played segment */}
                 <View
                   style={[
                     styles.scrubberFill,
-                    { width: `${progressPercent}%` },
+                    {
+                      width: `${progressPercent}%`,
+                      backgroundColor: isPlaying ? '#EF4444' : '#FA2D48',
+                    },
                   ]}
-                />
+                >
+                  {/* Flowing ribbon sine wave body */}
+                  {isPlaying && (
+                    <Animated.View
+                      style={[
+                        styles.snakeWaveSegment,
+                        {
+                          transform: [
+                            { translateY: snakeTranslateY },
+                            { scaleY: snakeScaleY },
+                          ],
+                        },
+                      ]}
+                    />
+                  )}
+
+                  {/* Flowing shimmer crawl inside ribbon */}
+                  {isPlaying && (
+                    <Animated.View
+                      style={[
+                        styles.waveShimmerGlow,
+                        { transform: [{ translateX: waveTranslateX }] },
+                      ]}
+                    />
+                  )}
+                </View>
+
+                {/* Animated Snake Head (Pip at current position) */}
+                {progressPercent > 0 && (
+                  <Animated.View
+                    style={[
+                      styles.snakeHeadPip,
+                      {
+                        left: `${progressPercent}%`,
+                        transform: [
+                          { translateX: -6 },
+                          { translateY: isPlaying ? snakeTranslateY : 0 },
+                        ],
+                      },
+                    ]}
+                  />
+                )}
               </View>
             </TouchableOpacity>
 
@@ -296,12 +418,23 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 2,
+    height: 2.5,
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    overflow: 'hidden',
   },
   floatingProgressFill: {
     height: '100%',
-    backgroundColor: '#EC4899',
+    backgroundColor: '#FA2D48',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  miniSnakeShimmer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 60,
+    backgroundColor: '#FF6B81',
+    opacity: 0.8,
   },
   miniTrackRow: {
     flexDirection: 'row',
@@ -362,24 +495,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  /* Fullscreen Modal Styles */
+  /* Native iOS PageSheet Container */
   modalContainer: {
     flex: 1,
     backgroundColor: '#0B0914',
     paddingHorizontal: 24,
     justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'ios' ? 54 : 32,
+    paddingTop: 16,
     paddingBottom: 40,
   },
   modalHeader: {
     alignItems: 'center',
-  },
-  grabBar: {
-    width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    marginBottom: 16,
+    width: '100%',
   },
   headerRow: {
     width: '100%',
@@ -417,7 +544,7 @@ const styles = StyleSheet.create({
   },
   centerSection: {
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: 14,
   },
   artworkBox: {
     width: SCREEN_WIDTH - 96,
@@ -441,7 +568,7 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   trackDetailsBox: {
-    marginTop: 28,
+    marginTop: 24,
     alignItems: 'center',
     paddingHorizontal: 16,
   },
@@ -461,18 +588,58 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   scrubberTouchArea: {
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   scrubberTrack: {
     width: '100%',
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    position: 'relative',
+    justifyContent: 'center',
   },
   scrubberFill: {
     height: '100%',
+    borderRadius: 2.5,
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 6,
+  },
+  snakeWaveSegment: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: '#DC2626',
+    opacity: 0.85,
+  },
+  waveShimmerGlow: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 70,
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
     borderRadius: 2,
-    backgroundColor: '#EC4899',
+  },
+  snakeHeadPip: {
+    position: 'absolute',
+    top: -3.5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#EF4444',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    elevation: 4,
+    zIndex: 10,
   },
   timeRow: {
     flexDirection: 'row',
@@ -489,7 +656,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 36,
-    marginTop: 20,
+    marginTop: 18,
   },
   transportBtn: {
     padding: 8,

@@ -36,7 +36,7 @@ export const useAudioPlayer = () => {
       try {
         await setAudioModeAsync({
           playsInSilentMode: true,
-      });
+        });
       } catch (err) {
         console.warn('AudioMode initialization warning:', err);
       }
@@ -48,12 +48,12 @@ export const useAudioPlayer = () => {
       if (playerRef.current) {
         try {
           playerRef.current.release();
-        } catch {}
+        } catch { }
       }
     };
   }, []);
 
-  const nextTrackRef = useRef<() => void>(() => {});
+  const nextTrackRef = useRef<() => void>(() => { });
 
   const playTrack = useCallback(
     async (track: Track, context: 'All' | 'Favorite' = 'All', queue: Track[] = []) => {
@@ -67,7 +67,7 @@ export const useAudioPlayer = () => {
         if (playerRef.current) {
           try {
             playerRef.current.release();
-          } catch {}
+          } catch { }
           playerRef.current = null;
         }
 
@@ -178,22 +178,30 @@ export const useAudioPlayer = () => {
   }, []);
 
   const stopTrack = useCallback(() => {
-  if (playerRef.current) {
-    try {
-      if (typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
-        (playerRef.current as any).setActiveForLockScreen(false);
-      }
-      playerRef.current.pause();
-      playerRef.current.release();
-    } catch {}
-    playerRef.current = null;
-  }
-  setCurrentTrack(null);
-  currentTrackRef.current = null;
-  setIsPlaying(false);
-  setCurrentTime(0);
-  setDuration(0);
-}, []);
+    if (playerRef.current) {
+      try {
+        if (typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
+          (playerRef.current as any).setActiveForLockScreen(false);
+        }
+        playerRef.current.pause();
+        playerRef.current.release();
+      } catch { }
+      playerRef.current = null;
+    }
+    setCurrentTrack(null);
+    currentTrackRef.current = null;
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, []);
+
+  const updatePlaybackContext = useCallback(
+    (context: 'All' | 'Favorite', queue: Track[]) => {
+      setPlaybackContext(context);
+      activeQueueRef.current = queue;
+    },
+    []
+  );
 
   return {
     currentTrack,
@@ -208,8 +216,8 @@ export const useAudioPlayer = () => {
     nextTrack,
     prevTrack,
     toggleRepeat,
-    stopTrack
+    stopTrack,
+    updatePlaybackContext
   };
 
 };
-

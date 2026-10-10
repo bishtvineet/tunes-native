@@ -116,7 +116,11 @@ export default function App() {
     prevTrack,
     toggleRepeat,
     stopTrack,
-  } = useAudioPlayer() as ReturnType<typeof useAudioPlayer> & { stopTrack?: () => void };
+    updatePlaybackContext,
+  } = useAudioPlayer() as ReturnType<typeof useAudioPlayer> & {
+    stopTrack?: () => void;
+    updatePlaybackContext?: (context: 'All' | 'Favorite', queue: Track[]) => void;
+  };
 
   // Load storage data and user configuration on boot
   useEffect(() => {
@@ -246,11 +250,26 @@ export default function App() {
   };
 
   const toggleFavorite = async (id: string) => {
-    const updated = favoriteIds.includes(id)
+    const isCurrentlyFavorite = favoriteIds.includes(id);
+    const updatedFavorites = isCurrentlyFavorite
       ? favoriteIds.filter((item) => item !== id)
       : [...favoriteIds, id];
-    setFavoriteIds(updated);
-    await AsyncStorage.setItem('tunes_favorites', JSON.stringify(updated));
+
+    setFavoriteIds(updatedFavorites);
+    await AsyncStorage.setItem('tunes_favorites', JSON.stringify(updatedFavorites));
+
+    // If the toggled track is the currently playing track, switch its playback queue & context
+    if (currentTrack?.id === id && typeof updatePlaybackContext === 'function') {
+      if (!isCurrentlyFavorite) {
+        // Just became a favorite -> switch to Favorite queue
+        const newFavQueue = tracks.filter((t) => updatedFavorites.includes(t.id));
+        updatePlaybackContext('Favorite', newFavQueue);
+      } else {
+        // Unfavorited -> switch back to All (non-favorite) queue
+        const newAllQueue = tracks.filter((t) => !updatedFavorites.includes(t.id));
+        updatePlaybackContext('All', newAllQueue);
+      }
+    }
   };
 
   const handleTrackSaved = async (newTrack: Track) => {
@@ -276,10 +295,18 @@ export default function App() {
   };
 
   const displayedTracks = useMemo(() => {
-    let list = tracks;
+    let list: Track[] = [];
+
     if (activeTab === 'favorite') {
+      // Only favorited tracks
       list = tracks.filter((t) => favoriteIds.includes(t.id));
+    } else if (activeTab === 'all') {
+      // Only non-favorited tracks (moved to favorite when heart is tapped)
+      list = tracks.filter((t) => !favoriteIds.includes(t.id));
+    } else {
+      list = tracks;
     }
+
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
