@@ -30,7 +30,7 @@ jobs:
         run: |
           cd ios
           xcodebuild -workspace *.xcworkspace \
-            -scheme tunesnative \
+            -scheme Tunes \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/tunesnative.xcarchive \
