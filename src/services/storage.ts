@@ -1,23 +1,41 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Track } from '../types';
+import { formatDuration } from '../utils/audio';
 
 const TRACKS_METADATA_KEY = 'tunes_native_tracks_meta';
-const TRACKS_DIR = `${FileSystem.documentDirectory}tracks/`;
+
+// Dynamically retrieve the current tracks directory in case iOS changed the sandbox container UUID
+export const getTracksDir = (): string => `${FileSystem.documentDirectory}tracks/`;
 
 // Ensure directory exists on device disk
 const ensureDirectoryExists = async () => {
-  const dirInfo = await FileSystem.getInfoAsync(TRACKS_DIR);
+  const dir = getTracksDir();
+  const dirInfo = await FileSystem.getInfoAsync(dir);
   if (!dirInfo.exists) {
-    await FileSystem.makeDirectoryAsync(TRACKS_DIR, { intermediates: true });
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   }
+};
+
+// Normalize track path to always use the live documentDirectory container
+const normalizeTrackPath = (track: Track): Track => {
+  const fileName = `${track.id}.mp3`;
+  const liveUri = `${getTracksDir()}${fileName}`;
+  return {
+    ...track,
+    fileUri: liveUri,
+    durationFormatted: track.duration && track.duration > 0 
+      ? formatDuration(track.duration) 
+      : track.durationFormatted || '--:--',
+  };
 };
 
 export const saveTrack = async (track: Track): Promise<void> => {
   try {
     await ensureDirectoryExists();
     const existingTracks = await getAllTracks();
-    const updated = [track, ...existingTracks.filter((t) => t.id !== track.id)];
+    const normalized = normalizeTrackPath(track);
+    const updated = [normalized, ...existingTracks.filter((t) => t.id !== track.id)];
     await AsyncStorage.setItem(TRACKS_METADATA_KEY, JSON.stringify(updated));
   } catch (err) {
     console.error('Failed to save track metadata:', err);
@@ -30,7 +48,10 @@ export const getAllTracks = async (): Promise<Track[]> => {
     const raw = await AsyncStorage.getItem(TRACKS_METADATA_KEY);
     if (!raw) return [];
     const list: Track[] = JSON.parse(raw);
-    return list.sort((a, b) => b.createdAt - a.createdAt);
+    
+    // Always map tracks to the current app container path
+    const resolvedTracks = list.map(normalizeTrackPath);
+    return resolvedTracks.sort((a, b) => b.createdAt - a.createdAt);
   } catch (err) {
     console.error('Failed to fetch tracks:', err);
     return [];
@@ -43,11 +64,10 @@ export const deleteTrack = async (id: string): Promise<void> => {
     const trackToDelete = existingTracks.find((t) => t.id === id);
 
     // 1. Delete physical audio file from device disk
-    if (trackToDelete && trackToDelete.fileUri) {
-      const fileInfo = await FileSystem.getInfoAsync(trackToDelete.fileUri);
-      if (fileInfo.exists) {
-        await FileSystem.deleteAsync(trackToDelete.fileUri, { idempotent: true });
-      }
+    const filePath = trackToDelete?.fileUri || getTrackFilePath(id);
+    const fileInfo = await FileSystem.getInfoAsync(filePath);
+    if (fileInfo.exists) {
+      await FileSystem.deleteAsync(filePath, { idempotent: true });
     }
 
     // 2. Remove metadata from AsyncStorage
@@ -69,11 +89,12 @@ export const deleteTrack = async (id: string): Promise<void> => {
 export const getStorageStats = async (): Promise<{ totalBytes: number; formattedSize: string }> => {
   try {
     await ensureDirectoryExists();
-    const files = await FileSystem.readDirectoryAsync(TRACKS_DIR);
+    const tracksDir = getTracksDir();
+    const files = await FileSystem.readDirectoryAsync(tracksDir);
     let totalBytes = 0;
 
     for (const fileName of files) {
-      const fileInfo = await FileSystem.getInfoAsync(`${TRACKS_DIR}${fileName}`);
+      const fileInfo = await FileSystem.getInfoAsync(`${tracksDir}${fileName}`);
       if (fileInfo.exists && !fileInfo.isDirectory) {
         totalBytes += fileInfo.size || 0;
       }
@@ -91,13 +112,14 @@ export const pruneStaleStorage = async (): Promise<{ freedBytes: number; prunedC
     await ensureDirectoryExists();
     const tracks = await getAllTracks();
     const validFilePaths = new Set(tracks.map((t) => t.fileUri));
+    const tracksDir = getTracksDir();
 
-    const files = await FileSystem.readDirectoryAsync(TRACKS_DIR);
+    const files = await FileSystem.readDirectoryAsync(tracksDir);
     let freedBytes = 0;
     let prunedCount = 0;
 
     for (const file of files) {
-      const fullPath = `${TRACKS_DIR}${file}`;
+      const fullPath = `${tracksDir}${file}`;
       if (!validFilePaths.has(fullPath)) {
         const info = await FileSystem.getInfoAsync(fullPath);
         if (info.exists) {
@@ -115,5 +137,5 @@ export const pruneStaleStorage = async (): Promise<{ freedBytes: number; prunedC
 };
 
 export const getTrackFilePath = (trackId: string): string => {
-  return `${TRACKS_DIR}${trackId}.mp3`;
+  return `${getTracksDir()}${trackId}.mp3`;
 };

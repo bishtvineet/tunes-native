@@ -36,7 +36,7 @@ export const useAudioPlayer = () => {
       try {
         await setAudioModeAsync({
           playsInSilentMode: true,
-          staysActiveInBackground: true, // <-- CRITICAL: Prevents iOS from suspending on lock screen
+          staysActiveInBackground: true,
           interruptionMode: 'doNotMix',
           shouldRouteThroughEarpiece: false,
         } as any);
@@ -50,6 +50,9 @@ export const useAudioPlayer = () => {
     return () => {
       if (playerRef.current) {
         try {
+          if (typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
+            (playerRef.current as any).setActiveForLockScreen(false);
+          }
           playerRef.current.release();
         } catch { }
       }
@@ -57,65 +60,7 @@ export const useAudioPlayer = () => {
   }, []);
 
   const nextTrackRef = useRef<() => void>(() => { });
-
-  const playTrack = useCallback(
-    async (track: Track, context: 'All' | 'Favorite' = 'All', queue: Track[] = []) => {
-      try {
-        setPlaybackContext(context);
-        if (queue.length > 0) {
-          activeQueueRef.current = queue;
-        }
-
-        // Release prior native player instance
-        if (playerRef.current) {
-          try {
-            if (typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
-              (playerRef.current as any).setActiveForLockScreen(false);
-            }
-            playerRef.current.release();
-          } catch { }
-          playerRef.current = null;
-        }
-
-        // Use createAudioPlayer factory function
-        const newPlayer = createAudioPlayer({ uri: track.fileUri });
-
-        // Activate native lock screen / background playback handling for this player instance
-        if (typeof (newPlayer as any).setActiveForLockScreen === 'function') {
-          (newPlayer as any).setActiveForLockScreen(true);
-        }
-
-        newPlayer.addListener('playbackStatusUpdate', (status) => {
-          setIsPlaying(Boolean(status.playing));
-          setCurrentTime(Math.floor(status.currentTime || 0));
-          setDuration(Math.floor(status.duration || 0));
-
-          if (status.didJustFinish) {
-            const mode = repeatModeRef.current;
-            if (mode === 'one') {
-              newPlayer.seekTo(0);
-              newPlayer.play();
-            } else if (mode === 'all') {
-              nextTrackRef.current();
-            } else {
-              setIsPlaying(false);
-              newPlayer.seekTo(0);
-            }
-          }
-        });
-
-        playerRef.current = newPlayer;
-        setCurrentTrack(track);
-        currentTrackRef.current = track;
-
-        newPlayer.play();
-        setIsPlaying(true);
-      } catch (err) {
-        console.error('Failed to load and play track with expo-audio:', err);
-      }
-    },
-    []
-  );
+  const prevTrackRef = useRef<() => void>(() => { });
 
   const togglePlay = useCallback(() => {
     const p = playerRef.current;
@@ -137,6 +82,106 @@ export const useAudioPlayer = () => {
     p.seekTo(seconds);
     setCurrentTime(seconds);
   }, []);
+
+  const playTrack = useCallback(
+    async (track: Track, context: 'All' | 'Favorite' = 'All', queue: Track[] = []) => {
+      try {
+        setPlaybackContext(context);
+        if (queue.length > 0) {
+          activeQueueRef.current = queue;
+        }
+
+        // Release prior native player instance
+        if (playerRef.current) {
+          try {
+            if (typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
+              (playerRef.current as any).setActiveForLockScreen(false);
+            }
+            playerRef.current.release();
+          } catch { }
+          playerRef.current = null;
+        }
+
+        // Initialize AudioPlayer with update intervals for lock-screen scrubbers
+        const newPlayer = createAudioPlayer(
+          { uri: track.fileUri },
+          { updateInterval: 1000 } as any
+        );
+
+        // Bind metadata and lock screen media options (Title, Artist, Artwork, Next/Prev)
+        if (typeof (newPlayer as any).setActiveForLockScreen === 'function') {
+          try {
+            (newPlayer as any).setActiveForLockScreen(
+              true,
+              {
+                title: track.title,
+                artist: track.artist,
+                artworkUrl: track.thumbnailUrl || undefined,
+              },
+              {
+                showNextTrack: true,
+                showPreviousTrack: true,
+                showSeekForward: true,
+                showSeekBackward: true,
+              }
+            );
+          } catch {
+            (newPlayer as any).setActiveForLockScreen(true);
+          }
+        }
+
+        // Connect remote lock-screen actions if supported by native layer
+        if (typeof (newPlayer as any).addListener === 'function') {
+          try {
+            (newPlayer as any).addListener('onRemoteNextTrack', () => {
+              nextTrackRef.current();
+            });
+            (newPlayer as any).addListener('onRemotePreviousTrack', () => {
+              prevTrackRef.current();
+            });
+          } catch { }
+        }
+
+        newPlayer.addListener('playbackStatusUpdate', (status) => {
+          setIsPlaying(Boolean(status.playing));
+          setCurrentTime(Math.floor(status.currentTime || 0));
+          
+          const trackDuration = Math.floor(status.duration || 0);
+          if (trackDuration > 0) {
+            setDuration(trackDuration);
+          }
+
+          if (status.didJustFinish) {
+            const mode = repeatModeRef.current;
+            if (mode === 'one') {
+              newPlayer.seekTo(0);
+              newPlayer.play();
+            } else if (mode === 'all') {
+              nextTrackRef.current();
+            } else {
+              setIsPlaying(false);
+              newPlayer.seekTo(0);
+            }
+          }
+        });
+
+        playerRef.current = newPlayer;
+        setCurrentTrack(track);
+        currentTrackRef.current = track;
+
+        // If track duration was already known, initialize it
+        if (track.duration && track.duration > 0) {
+          setDuration(track.duration);
+        }
+
+        newPlayer.play();
+        setIsPlaying(true);
+      } catch (err) {
+        console.error('Failed to load and play track with expo-audio:', err);
+      }
+    },
+    []
+  );
 
   const nextTrack = useCallback(() => {
     const queue = activeQueueRef.current;
@@ -176,6 +221,10 @@ export const useAudioPlayer = () => {
       playTrack(queue[queue.length - 1], playbackContext, queue);
     }
   }, [playbackContext, playTrack, currentTime]);
+
+  useEffect(() => {
+    prevTrackRef.current = prevTrack;
+  }, [prevTrack]);
 
   const toggleRepeat = useCallback(() => {
     setRepeatMode((prev) => {
