@@ -30,13 +30,16 @@ export const useAudioPlayer = () => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
 
-  // Configure native iOS audio session once on mount
+  // Configure native iOS audio session once on mount with full background playback support
   useEffect(() => {
     const initAudio = async () => {
       try {
         await setAudioModeAsync({
           playsInSilentMode: true,
-        });
+          staysActiveInBackground: true, // <-- CRITICAL: Prevents iOS from suspending on lock screen
+          interruptionMode: 'doNotMix',
+          shouldRouteThroughEarpiece: false,
+        } as any);
       } catch (err) {
         console.warn('AudioMode initialization warning:', err);
       }
@@ -66,6 +69,9 @@ export const useAudioPlayer = () => {
         // Release prior native player instance
         if (playerRef.current) {
           try {
+            if (typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
+              (playerRef.current as any).setActiveForLockScreen(false);
+            }
             playerRef.current.release();
           } catch { }
           playerRef.current = null;
@@ -73,6 +79,11 @@ export const useAudioPlayer = () => {
 
         // Use createAudioPlayer factory function
         const newPlayer = createAudioPlayer({ uri: track.fileUri });
+
+        // Activate native lock screen / background playback handling for this player instance
+        if (typeof (newPlayer as any).setActiveForLockScreen === 'function') {
+          (newPlayer as any).setActiveForLockScreen(true);
+        }
 
         newPlayer.addListener('playbackStatusUpdate', (status) => {
           setIsPlaying(Boolean(status.playing));
@@ -217,7 +228,6 @@ export const useAudioPlayer = () => {
     prevTrack,
     toggleRepeat,
     stopTrack,
-    updatePlaybackContext
+    updatePlaybackContext,
   };
-
 };
